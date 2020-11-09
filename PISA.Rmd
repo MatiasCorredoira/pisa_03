@@ -1,0 +1,262 @@
+---
+title: " PRACTICA PISA"
+author: "Matias Corredoira"
+date: "7/11/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r message=FALSE, warning=FALSE}
+library(corrplot)
+library(tidyverse)
+library(caret) 
+library(magrittr) 
+library(knitr) 
+library(rsample)
+library(PerformanceAnalytics) 
+library(leaps) 
+library(skimr) 
+library(gam)
+library(ggcorrplot) 
+library(ISLR)
+library(readr)
+library(janitor)
+library(imputeTS)
+
+
+
+```
+
+
+## Cargamos la base de datos y revisamos la base de datos
+
+```{r, echo = TRUE, message=FALSE, warning=FALSE}
+pisa <- read_csv("pisasci2006.csv")
+View(pisa)
+```
+
+## Realizamos una primera visión de los datos
+
+```{r message=FALSE, warning=FALSE}
+head(pisa)
+```
+
+
+
+
+
+# Limpieza de datos
+
+
+
+Escogemos las columnas del enunciado
+
+```{r pressure, echo=FALSE, message = FALSE}
+pisa %<>%
+  select(Country, Overall, Interest, Support, Income, Health, Edu, HDI)
+
+
+```
+
+Marcamos las columnas bien y pedimos que las muestre y así trabajarlas sin problema
+
+```{r echo= FALSE}
+pisa %<>% clean_names()
+colnames(pisa)
+```
+
+Sumamos la cantidad de na por columna
+
+```{r,  echo=FALSE,message=FALSE, warning=FALSE}
+pisa %<>% distinct(country, .keep_all = T)
+
+summarise_all(pisa, funs(sum(is.na(.))))
+
+
+```
+
+Dada la existencia de demasiados valores NaN optamos por coger la media con na_mean desde imputeTS
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+pisa <- na_mean(pisa)
+
+```
+
+### Realizamos una visión general de la base de nuevo que nos permitirá apreciar otros aspectos de la base de datos
+
+```{r, echo= FALSE}
+skim(pisa)
+```
+
+
+
+### Representamos graficamente las variables de la base de datos
+
+```{r}
+plot(pisa)
+```
+
+## Realizamos un gráfico de correlaciones entre las distintas variables
+```{r}
+corrplot(cor(pisa%>% 
+               select_at(vars(-country)), 
+             use = "complete.obs"), 
+         method = "circle")
+
+```
+
+
+
+
+Continuamos calculando los grados de libertad además de CV. Incluiremos las variables clave marcadas en el enunciado.
+
+```{r, message = FALSE, echo= FALSE, warning=FALSE}
+sinterest <- smooth.spline(pisa$interest,pisa$overall, cv = TRUE)
+sinterest
+
+ssupport <- smooth.spline(pisa$support,pisa$overall, cv = TRUE)
+ssupport
+
+sincome<- smooth.spline(pisa$income,pisa$overall, cv = TRUE)
+sincome
+
+shealth <- smooth.spline(pisa$health,pisa$overall, cv = TRUE)
+shealth
+
+shdi <- smooth.spline(pisa$hdi,pisa$overall, cv = TRUE)
+shdi
+
+sedu <- smooth.spline(pisa$edu,pisa$overall, cv = TRUE)
+sedu
+
+
+
+
+
+
+```
+Nos da para cada variable en relación a sus grados de libertad:
+-interest=4.750171
+-support:2.001243
+-income:4.244952
+-health:2.002844
+-hdi:8.603228
+-edu: 2.002385
+
+
+
+
+
+
+
+
+
+# MODELOS GAM
+
+Realizamos un primer modelo GAM para hacernos una idea aproximada.
+
+
+```{r}
+gam_1 <- gam(overall ~ s(interest, df= 4.750171) + s(support, df = 2.001243) + s(income, df  = 4.244952) + s(health, df = 2.002844) + s(hdi, df=8.603228) + s(edu, df=2.002385) , data=pisa)
+plot(gam_1,se=TRUE, col='blue')
+summary(gam_1)
+
+```
+
+
+
+
+
+Probamos otro modelo, en este caso sin los grados de libertad indicados ni en health ni hdi
+
+
+```{r}
+gam_2 <- gam(overall ~ s(interest, df= 4.750171) + support + s(income, df  = 4.244952) + health + s(hdi, df=8.603228) + s(edu, df=2.002385) , data=pisa)
+plot(gam_2,se=TRUE, col='green')
+summary(gam_2)
+
+```
+
+Realizamos de nuevo lo mismo sin la variable edu
+
+```{r}
+# Fix the smoothing parameter at 0.1
+gam_3 <- gam(overall ~ s(interest, df= 4.750171) + support + s(income, df  = 4.244952) + health + hdi + edu , data=pisa)
+plot(gam_1,se=TRUE, col='yellow')
+summary(gam_3)
+```
+
+A continuación realizamos el test anova para comparar los modelos realizados anteriormente y así comprobar cual genera una cantidad menor de residuos
+
+```{r , echo=FALSE}
+anova(gam_1, gam_2, gam_3,  test='F')
+```
+
+Vemos que el modelo que genera menores residuos es el 1 por lo que será ese el que ultilicemos
+
+
+
+
+
+
+
+
+
+# Cross Validation
+
+Dividimos nuestra base en 2 partes como bien es sabido, train y test. 
+Se hace de nuevo sin embargo en este caso dudamos de su utilidad dad que estamos trabajando sobre una base da datos que posee muy pocas observaciones.
+
+```{r}
+
+set.seed(1234)
+pisa_split <- initial_split(pisa, prop =.8, strata = "overall")
+pisa_train <- training(pisa_split)
+pisa_test <- testing(pisa_split)
+
+
+
+
+```
+
+
+
+Incluimos el mejor de los 3 modelos extraídos anteriormente
+
+```{r , echo=TRUE}
+
+gam_1t <- gam(overall ~ s(interest, df= 4.750171) + s(support, df = 2.001243) + s(income, df  = 4.244952) + s(health, df = 2.002844) + s(hdi, df=8.603228) + s(edu, df=2.002385) , data=pisa_train)
+plot(gam_1t,se=TRUE, col='black')
+summary(gam_1t)
+
+```
+
+
+Se pueba sin incluir los grados de libertad incluidos al principio en las variables health, edu y hdi
+
+```{r}
+gam_2t <- gam(overall ~ s(interest, df= 4.750171) + s(support, df = 2.001243) + s(income, df  = 4.244952) + health + hdi + edu, data=pisa_train)
+plot(gam_2t,se=TRUE, col='black')
+summary(gam_2t)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
